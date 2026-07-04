@@ -216,14 +216,10 @@ public:
 
         if (predicted_class == target_class) return;
 
-        // 2. Output layer updates based on the last hidden activation.
-        output_layer.update_weights(target_class, current_act, true);
-        output_layer.update_weights(predicted_class, current_act, false);
-
-        // 3. Backpropagate graded signals from the output back through the
-        // hidden layers. A hidden unit's signal is the difference between how
-        // much the target class wants it high and how much the wrongly
-        // predicted class wants it high; weight polarity is graded
+        // 2. Build the graded hidden-layer signal from the output weights
+        // BEFORE they are updated. A hidden unit's signal is the difference
+        // between how much the target class wants it high and how much the
+        // wrongly predicted class wants it high; weight polarity is graded
         // (0 -> -3, 1 -> -1, 2 -> +1, 3 -> +3) instead of binary +/-1.
         std::vector<int> next_layer_signal(hidden_layers.back().get_num_outputs(), 0);
         for (int h = 0; h < hidden_layers.back().get_num_outputs(); ++h) {
@@ -231,6 +227,11 @@ public:
                                  - output_layer.get_weight(predicted_class, h);
         }
 
+        // 3. Output layer updates based on the last hidden activation.
+        output_layer.update_weights(target_class, current_act, true);
+        output_layer.update_weights(predicted_class, current_act, false);
+
+        // 4. Backpropagate the graded signals through the hidden layers.
         for (int layer_index = (int)hidden_layers.size() - 1; layer_index >= 0; --layer_index) {
             QuatLayer& current_layer = hidden_layers[layer_index];
             const std::vector<uint8_t>& prev_act = (layer_index == 0) ? image : hidden_activations[layer_index - 1];
@@ -275,7 +276,7 @@ public:
             }
 
             // Propagate one layer further back through current_layer's OWN
-            // weights (see claude_multibnn.cpp), sized by its input count.
+            // weights, sized by its input count.
             std::vector<int> prev_layer_signal(current_layer.get_num_inputs(), 0);
             for (int h = 0; h < n_out; ++h) {
                 int signal = next_layer_signal[h];
