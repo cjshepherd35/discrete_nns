@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <vector>
 #include <fstream>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <iostream>
 #include <random>
+#include <cmath>
 
 
 
@@ -142,11 +144,7 @@ public:
 
         if (predicted_class == target_class) return;
 
-        // 2. Output layer updates based on the last hidden activation.
-        output_layer.update_weights(target_class, current_act, true);
-        output_layer.update_weights(predicted_class, current_act, false);
-
-        // 3. Backpropagate layer-wise signals from output back through hidden layers.
+        // 2. Build the hidden-layer signal from the output weights *before* updating them.
         std::vector<int> next_layer_signal(hidden_layers.back().get_num_outputs(), 0);
         for (int h = 0; h < hidden_layers.back().get_num_outputs(); ++h) {
             bool wants_target = output_layer.get_weight(target_class, h);
@@ -158,14 +156,25 @@ public:
             }
         }
 
+        // 3. Output layer updates based on the last hidden activation.
+        output_layer.update_weights(target_class, current_act, true);
+        output_layer.update_weights(predicted_class, current_act, false);
+
+        // The top-layer signal is exactly +/-1; propagated signals are sums, so lower
+        // layers only act when the sum clears a noise floor of ~2 standard deviations.
+        int sig_threshold = 1;
+
         for (int layer_index = (int)hidden_layers.size() - 1; layer_index >= 0; --layer_index) {
             BoldLayer& current_layer = hidden_layers[layer_index];
             const std::vector<bool>& prev_act = (layer_index == 0) ? image : hidden_activations[layer_index - 1];
 
+            // Only touch units whose current output disagrees with the signal; units that
+            // already agree are left alone to avoid churning the whole layer on every error.
+            const std::vector<bool>& layer_act = hidden_activations[layer_index];
             for (int h = 0; h < current_layer.get_num_outputs(); ++h) {
-                if (next_layer_signal[h] == 1) {
+                if (next_layer_signal[h] >= sig_threshold && !layer_act[h]) {
                     current_layer.update_weights(h, prev_act, true);
-                } else if (next_layer_signal[h] == -1) {
+                } else if (next_layer_signal[h] <= -sig_threshold && layer_act[h]) {
                     current_layer.update_weights(h, prev_act, false);
                 }
             }
@@ -174,18 +183,22 @@ public:
                 break;
             }
 
-            const BoldLayer& deeper_layer = hidden_layers[layer_index]; 
+            // Push the signal through this layer's weights to score its inputs
+            // (which are the outputs of the layer below).
             std::vector<int> current_layer_signal(current_layer.get_num_inputs(), 0);
-            for (int deeper_h = 0; deeper_h < deeper_layer.get_num_outputs(); ++deeper_h) { //was get_num_outputs(), claude says inputs
-                int signal = next_layer_signal[deeper_h];
+            int total_magnitude = 0;
+            for (int h = 0; h < current_layer.get_num_outputs(); ++h) {
+                int signal = next_layer_signal[h];
                 if (signal == 0) continue;
+                total_magnitude += std::abs(signal);
 
-                for (int prev_h = 0; prev_h < current_layer.get_num_outputs(); ++prev_h) {
-                    bool weight = deeper_layer.get_weight(deeper_h, prev_h);
-                    current_layer_signal[prev_h] += signal * (weight ? 1 : -1);
+                for (int in = 0; in < current_layer.get_num_inputs(); ++in) {
+                    bool weight = current_layer.get_weight(h, in);
+                    current_layer_signal[in] += signal * (weight ? 1 : -1);
                 }
             }
 
+            sig_threshold = std::max(1, (int)(2.5 * std::sqrt((double)total_magnitude)));
             next_layer_signal = std::move(current_layer_signal);
         }
     }
@@ -289,10 +302,10 @@ int main(int argc, char* argv[]) {
         }
         std::cout << "Using " << num_hidden_layers << " hidden layer(s)." << std::endl;
 
-        DeepBoldNetwork network(784, 128, num_hidden_layers, 10, 64);
+        DeepBoldNetwork network(784, 128, num_hidden_layers, 10, 128);
         int epochs = 4; // BOLD converges exceptionally fast due to exact discrete gradients
-        int testsamples = 20;
-        int train_iters = X_train.size();
+        size_t testsamples = X_test.size();
+        size_t train_iters = X_train.size();
         std::cout << "\nStarting Native Boolean Training Loop..." << std::endl;
 
         for (int epoch = 1; epoch <= epochs; ++epoch) {
@@ -303,7 +316,7 @@ int main(int argc, char* argv[]) {
                 network.train_step(X_train[i], y_train[i]);
                 
                 // Optional: Print progress every 10,000 images
-                if ((i + 1) % train_iters == 0) {
+                if ((i + 1) % 10000 == 0) {
                     std::cout << "  Processed " << (i + 1) << " images..." << std::endl;
                 }
             }
