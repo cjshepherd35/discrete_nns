@@ -1,1 +1,1 @@
-multilayerbnnv2.cpp is the more correct version of the boolean neural network. it got 77% on mnist test set accuracy. quaternn is a 4 value rather than two value(boolean) underlying set for weights and data, it got about 88% accuracy. 
+multilayerbnnv2.cpp is the more correct version of the boolean neural network. it got 77% on mnist test set accuracy. quaternn is a 4 value(quaternary) rather than two value(boolean) underlying set for weights and data, it got about 88% accuracy. 
