@@ -8,6 +8,52 @@ throw away real-valued weights and backprop.
 
 ---
 
+## 0. Background — BOLD, boolean nets, and the quaternary net (`qnn2.cpp`)
+
+This whole line of work descends from **BOLD (Boolean Deep Learning)** — the idea
+that you can train deep networks whose weights and activations are **discrete**,
+using **local, gradient-free update rules** instead of backpropagation. Credit for
+the underlying approach goes to BOLD; everything in this repo is an adaptation of
+it, first to binary nets, then to quaternary, then to language modeling.
+
+**Lineage:**
+
+> **BOLD (Boolean Deep Learning)** → binary nets (`boolean_nn.cpp`,
+> `twolayerbnn.cpp`, `multilayerbnn.cpp`, `multibnnv2.cpp`) → **quaternary net
+> (`qnn2.cpp`, "quaternn")** → **quaternary LM** (this project).
+
+### The regular quaternary net (`qnn2.cpp`)
+
+`qnn2.cpp` is the base model everything else is built on: a **feed-forward, 2-bit
+classifier for MNIST** (784-pixel inputs, 3 hidden layers, ~**89.5%** peak test
+accuracy). It generalizes the boolean nets from 1-bit to **4-level `{0,1,2,3}`**
+weights, and it establishes every primitive the language models reuse:
+
+- **4-level weights backed by clipped integer accumulators.** The weight is a 2-bit
+  quantization of a latent accumulator living in `[-T, +T]`, read off by
+  quarter-band — exactly the mechanism §1 describes. (This latent-accumulator idea
+  is inherited straight from the boolean nets, where the weight was 1 bit read off
+  the accumulator's sign.)
+- **`qscore` / `qpolarity`** — the integer scoring table (same-side agreement
+  rewarded, opposite penalized) and the polarity map `2w − 3`.
+- **A per-neuron running mean/deviation ("batch-norm analog").** The qscore table is
+  negatively biased (penalties reach −3, rewards cap at +2), so raw sums sit far
+  below zero; each neuron fires based on how far its sum deviates from *its own*
+  running mean, not from a fixed zero.
+- **Gradient-free local learning.** A sign/Hebbian push into the accumulators,
+  restricted by a **saturation gate** (don't update already-railed units) and a
+  **mean-|signal| magnitude cutoff** (only update on above-average signal). No
+  backprop, no floating point.
+
+The LM work (`qllm*.cpp`) takes these exact pieces and swaps MNIST classification
+for next-token prediction — adding an embedding table, causal self-attention, and a
+transformer stack — but keeps the discrete accumulator-backed weights and the local
+update rule unchanged. So the failure modes explored below (railing, the bang-bang
+collapse, the saturation gate) are all properties of the underlying BOLD-style
+discrete learning, surfaced at language-model scale.
+
+---
+
 ## 1. The core method
 
 Every weight is one of **four levels `{0, 1, 2, 3}`** (2 bits). There is no
@@ -308,4 +354,3 @@ it.
 
 *This log reflects an exploratory research thread; numbers are seed- and
 schedule-dependent (see §7.6). Reproduce with the exact argv strings above.*
- 
